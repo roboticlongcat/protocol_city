@@ -3,38 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <title>Protocol City</title>
-
     <style>
-      [hidden] {
-        display: none !important;
-      }
+      [hidden] { display: none !important; }
+
       body {
         margin: 0;
         overflow: hidden;
-        font-family: Arial, sans-serif;
+        font-family: system-ui, Arial, sans-serif;
         background: #05070d;
         color: #e5e7eb;
       }
 
-      #overlay {
+      #overlay,
+      #dept-overlay,
+      #activity-overlay,
+      #npc-overlay {
         position: fixed;
         inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: rgba(3, 7, 18, 0.8);
-        z-index: 10;
+        background: rgba(3, 7, 18, 0.72);
+        z-index: 20;
       }
 
       .panel {
-        width: 320px;
+        width: 340px;
+        max-width: 92vw;
+        max-height: 86vh;
+        overflow: auto;
         padding: 24px;
         border-radius: 12px;
-        background: rgba(15, 23, 42, 0.95);
+        background: rgba(15, 23, 42, 0.97);
         border: 1px solid rgba(148, 163, 184, 0.2);
       }
 
-      input {
+      .panel.wide { width: 520px; }
+
+      input,
+      textarea {
         width: 100%;
         margin-bottom: 10px;
         padding: 10px;
@@ -43,6 +50,7 @@
         background: #020617;
         color: white;
         box-sizing: border-box;
+        font-family: inherit;
       }
 
       button {
@@ -54,60 +62,119 @@
         cursor: pointer;
         background: #0ea5e9;
         color: white;
+        font-weight: 600;
       }
-
-      #register-btn {
-        background: #22c55e;
-      }
+      #register-btn { background: #22c55e; }
+      .ghost { background: #64748b !important; }
 
       #hud {
         position: fixed;
         top: 10px;
         left: 10px;
         z-index: 5;
-        width: 360px;
+        width: 380px;
+        max-width: 46vw;
         pointer-events: none;
       }
 
+      .hud-box {
+        margin-bottom: 6px;
+        background: rgba(2, 6, 23, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
       #log {
-        max-height: 260px;
+        max-height: 240px;
         overflow: auto;
         font-size: 13px;
-        background: rgba(2, 6, 23, 0.65);
+        background: rgba(2, 6, 23, 0.7);
         border: 1px solid rgba(148, 163, 184, 0.2);
         border-radius: 8px;
         padding: 8px;
       }
 
-      #controls {
-        margin-top: 8px;
-        font-size: 12px;
-        opacity: 0.8;
+      #controls-hint { margin-top: 8px; font-size: 12px; opacity: 0.85; }
+
+      /* мини-игры */
+      .act-item {
+        margin: 6px 0;
+        padding: 10px;
+        border-radius: 8px;
+        background: #1e293b;
+        border: 1px solid #334155;
+        cursor: pointer;
+        user-select: none;
       }
+      .act-item.selected { border-color: #22d3ee; background: #0e7490; }
+      .bucket {
+        min-height: 84px;
+        margin: 8px 0;
+        padding: 8px;
+        border-radius: 8px;
+        border: 2px dashed #475569;
+      }
+      .bucket b { display: block; margin-bottom: 4px; color: #93c5fd; }
     </style>
   </head>
 
   <body>
+    <!-- Логин -->
     <div id="overlay">
       <div class="panel">
-        <h2>Протокол-Сити</h2>
-
+        <h2>Протокол‑Сити</h2>
         <input id="username" placeholder="Имя пользователя" />
         <input id="password" type="password" placeholder="Пароль" />
-
         <button id="login-btn">Войти</button>
         <button id="register-btn">Регистрация</button>
-
-        <div id="status" style="margin-top: 10px; font-size: 13px"></div>
+        <div id="status" style="margin-top:10px;font-size:13px"></div>
       </div>
     </div>
 
+    <!-- Выбор / смена отдела -->
+    <div id="dept-overlay" hidden>
+      <div class="panel">
+        <h2>Выбор отдела</h2>
+        <div id="dept-list"></div>
+        <div id="dept-status" style="margin-top:10px;font-size:13px"></div>
+        <button id="dept-close" class="ghost">Закрыть</button>
+      </div>
+    </div>
+
+    <!-- Мини-игра -->
+    <div id="activity-overlay" hidden>
+      <div class="panel wide">
+        <h3 id="act-title"></h3>
+        <div id="act-body"></div>
+        <button id="act-submit">Ответить</button>
+        <button id="act-cancel" class="ghost">Отмена</button>
+        <div id="act-status" style="margin-top:10px;font-size:13px"></div>
+      </div>
+    </div>
+
+    <!-- Диалог с NPC -->
+    <div id="npc-overlay" hidden>
+      <div class="panel">
+        <h3 id="npc-name">NPC</h3>
+        <div id="npc-log" style="max-height:200px;overflow:auto;font-size:13px;margin-bottom:10px"></div>
+        <input id="npc-input" placeholder="Ваш вопрос..." />
+        <button id="npc-send">Отправить</button>
+        <button id="npc-close" class="ghost">Закрыть (Esc)</button>
+      </div>
+    </div>
+
+    <!-- HUD -->
     <div id="hud" hidden>
+      <div id="dept-panel" class="hud-box"></div>
+      <div id="task-panel" class="hud-box"></div>
       <div id="log"></div>
-      <div id="controls">
-        WASD — движение<br />
-        E — взаимодействие с терминалом<br />
-        N — спросить НПС
+      <div id="controls-hint">
+        ЛКМ — захват мыши · WASD — движение · Space — прыжок<br />
+        E — сесть / встать / использовать компьютер / терминал<br />
+        N — спросить NPC · Esc — закрыть окно
       </div>
     </div>
 

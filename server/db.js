@@ -2,7 +2,6 @@ const Database = require("better-sqlite3");
 const path = require("path");
 
 const db = new Database(path.join(__dirname, "protocol-city.db"));
-
 db.pragma("journal_mode = WAL");
 
 db.exec(`
@@ -19,62 +18,67 @@ CREATE TABLE IF NOT EXISTS player_states (
   y REAL DEFAULT 0,
   z REAL DEFAULT 0,
   rot_y REAL DEFAULT 0,
-  zone TEXT DEFAULT 'spawn',
+  zone TEXT DEFAULT 'lobby',
   flags TEXT DEFAULT '{}',
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS zones (
+CREATE TABLE IF NOT EXISTS departments (
   id INTEGER PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
+  description TEXT,
+  max_players INTEGER DEFAULT 3,
+  color TEXT DEFAULT '#ffffff',
   x REAL DEFAULT 0,
   y REAL DEFAULT 0,
   z REAL DEFAULT 0,
-  radius REAL DEFAULT 8,
-  color TEXT DEFAULT '#ffffff',
-  data TEXT DEFAULT '{}'
+  radius REAL DEFAULT 10
+);
+
+CREATE TABLE IF NOT EXISTS department_assignments (
+  user_id INTEGER PRIMARY KEY,
+  department_id INTEGER NOT NULL,
+  role TEXT DEFAULT 'junior',
+  assigned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (department_id) REFERENCES departments(id)
 );
 
 CREATE TABLE IF NOT EXISTS npcs (
   id INTEGER PRIMARY KEY,
-  zone_id INTEGER,
+  department_id INTEGER,
   name TEXT NOT NULL,
   role TEXT NOT NULL,
-  model TEXT DEFAULT 'qwen2.5:3b',
-  personality TEXT DEFAULT 'friendly'
+  personality TEXT DEFAULT 'friendly',
+  FOREIGN KEY (department_id) REFERENCES departments(id)
 );
 
-CREATE TABLE IF NOT EXISTS missions (
-  id INTEGER PRIMARY KEY,
-  slug TEXT UNIQUE NOT NULL,
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  department_id INTEGER,
   title TEXT NOT NULL,
-  description TEXT
+  description TEXT,
+  difficulty TEXT DEFAULT 'easy',
+  reward_points INTEGER DEFAULT 10,
+  FOREIGN KEY (department_id) REFERENCES departments(id)
 );
 
-CREATE TABLE IF NOT EXISTS mission_progress (
+CREATE TABLE IF NOT EXISTS task_instances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
-  mission_id INTEGER NOT NULL,
-  step INTEGER DEFAULT 0,
-  completed INTEGER DEFAULT 0,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, mission_id)
+  status TEXT DEFAULT 'pending',
+  assigned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  result TEXT,
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS game_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER,
   type TEXT,
-  payload TEXT,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS requests_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  method TEXT,
-  path TEXT,
-  status INTEGER,
   payload TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -86,6 +90,14 @@ CREATE TABLE IF NOT EXISTS npc_dialogues (
   role TEXT,
   content TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
 `);
 
