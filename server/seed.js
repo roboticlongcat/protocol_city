@@ -340,3 +340,51 @@ function seedActivities() {
 seedActivities();
 
 console.log("Seed completed");
+
+function seedTeamProject() {
+  db.exec("DELETE FROM project_participants; DELETE FROM project_steps; DELETE FROM team_projects;");
+
+  const proj = db.prepare(`
+    INSERT INTO team_projects (slug, title, description, kind, reward_points, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    "release_pipeline",
+    "Релиз фичи «Личный кабинет»",
+    "Соберите релиз по конвейеру: фронт → бэк → QA → DevOps. Проект засчитан, только когда все 4 шага сданы разными людьми.",
+    "pipeline",
+    100,
+    "open"
+  );
+  const projectId = Number(proj.lastInsertRowid);
+
+  const deptId = (slug) => db.prepare("SELECT id FROM departments WHERE slug = ?").get(slug)?.id;
+  const actIdByTaskTitle = (title) => {
+    const t = db.prepare("SELECT id FROM tasks WHERE title = ?").get(title);
+    if (!t) return null;
+    return db.prepare("SELECT id FROM activities WHERE task_id = ?").get(t.id)?.id ?? null;
+  };
+
+  // шаг конвейера -> существующая мини-игра задачи этого отдела
+  const plan = [
+    { dept: "frontend", task: "Сверстать форму логина" },          // blocks
+    { dept: "backend",  task: "Реализовать эндпоинт /api/users" }, // quiz
+    { dept: "qa",       task: "Написать тест-кейсы для логина" },   // sorting
+    { dept: "devops",   task: "Написать Dockerfile" },             // blocks
+  ];
+
+  let prevStepId = null;
+  plan.forEach((p, i) => {
+    const d = deptId(p.dept);
+    const a = actIdByTaskTitle(p.task);
+    if (!d || !a) { console.warn("seedTeamProject: нет dept/activity для", p); return; }
+    const st = db.prepare(`
+      INSERT INTO project_steps (project_id, department_id, order_index, activity_id, depends_on_step_id, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(projectId, d, i, a, prevStepId, i === 0 ? "available" : "locked");
+    prevStepId = Number(st.lastInsertRowid);
+  });
+
+  console.log("Team project seeded");
+}
+
+seedTeamProject();

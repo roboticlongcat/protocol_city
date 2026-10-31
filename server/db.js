@@ -99,6 +99,38 @@ CREATE TABLE IF NOT EXISTS activities (
   data TEXT NOT NULL,
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
+
+CREATE TABLE IF NOT EXISTS team_projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  kind TEXT NOT NULL DEFAULT 'pipeline',
+  reward_points INTEGER DEFAULT 100,
+  status TEXT DEFAULT 'open'
+);
+
+CREATE TABLE IF NOT EXISTS project_steps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  department_id INTEGER NOT NULL,
+  order_index INTEGER DEFAULT 0,
+  activity_id INTEGER,
+  depends_on_step_id INTEGER,
+  status TEXT DEFAULT 'locked',
+  assigned_user_id INTEGER,
+  done_at TEXT,
+  FOREIGN KEY (project_id) REFERENCES team_projects(id),
+  FOREIGN KEY (department_id) REFERENCES departments(id),
+  FOREIGN KEY (activity_id) REFERENCES activities(id)
+);
+
+CREATE TABLE IF NOT EXISTS project_participants (
+  project_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (project_id, user_id)
+);
 `);
 
 module.exports = db;

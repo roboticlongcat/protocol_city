@@ -25,6 +25,7 @@ let departments = [];
 let npcs = [];
 let playerDepartment = null;
 let activeTask = null;
+let project = null;
 let points = 0;
 
 // --- мини-игры ---
@@ -178,6 +179,7 @@ function overlayEls() {
     document.getElementById("dept-overlay"),
     document.getElementById("activity-overlay"),
     document.getElementById("npc-overlay"),
+    document.getElementById("project-overlay"),   
   ];
 }
 function anyOverlayOpen() {
@@ -305,6 +307,36 @@ function addGameBox(id, color, x, z, labelText, group = objectGroup) {
   return mesh;
 }
 
+function addBoard(id, color, x, z, labelText) {
+  const group = new THREE.Group();
+  const panel = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 1.5, 0.12),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
+  );
+  panel.position.y = 1.5;
+  panel.castShadow = true;
+  group.add(panel);
+  // ножки
+  const legGeo = new THREE.BoxGeometry(0.08, 1.0, 0.08);
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x334155 });
+  for (const lx of [-1.0, 1.0]) {
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(lx, 0.5, 0);
+    group.add(leg);
+  }
+  group.position.set(x, 0, z);
+  group.userData.interactableId = id;
+  objectGroup.add(group);
+  interactables.push(group);
+
+  if (labelText) {
+    const lbl = makeLabel(labelText, [11, 2.6]);
+    lbl.position.set(x, 2.7, z);
+    objectGroup.add(lbl);
+  }
+  return group;
+}
+
 function buildGameEntities() {
   deptGroup.clear();
   objectGroup.clear();
@@ -337,12 +369,15 @@ function buildGameEntities() {
     );
   }
 
-  // стол PM в кабинете начальника
+    // стол PM — в кабинете начальника
   const boss = ROOMS.boss;
   addGameBox("pm_desk", 0xeab308, boss.x, roomDoorZ(boss), "Стол PM: взять задачу (E)");
 
-  // рабочее место для мини-игры в переговорной
-  addGameBox("work_terminal", 0x22d3ee, ROOMS.lobby.x, 4, "Рабочая консоль: мини-игра (E)");
+  // рабочая консоль (мини-игра) — у ЮЖНОГО прохода переговорной
+  addGameBox("work_terminal", 0x22d3ee, ROOMS.lobby.x, ROOMS.lobby.z + 5, "Рабочая консоль: мини-игра (E)");
+
+  // доска проекта — плоский флипчарт у СЕВЕРНОЙ стены переговорной, лицом к входу
+  addBoard("project_board", 0xf59e0b, ROOMS.lobby.x, ROOMS.lobby.z - 5, "Доска проекта: конвейер (E / F)");
 
   // NPC
   for (const npc of npcs) {
@@ -449,6 +484,8 @@ function handleMessage(msg) {
     playerDepartment = msg.playerDepartment || null;
     activeTask = msg.activeTask || null;
     points = msg.flags?.points || 0;
+    project = msg.project || null;
+    renderProjectPanel();
 
     if (playerDepartment) teleportToRoom(playerDepartment.slug);
     else { player.x = msg.position.x; player.z = msg.position.z; player.y = floorAt(player.x, player.z, 0); applyPlayerTransforms(); }
@@ -460,6 +497,12 @@ function handleMessage(msg) {
     updateTaskPanel();
     log(`Добро пожаловать в офис, ${currentUsername}`);
     if (!playerDepartment) showDeptChooser();
+  }
+
+  if (msg.type === "team_project_updated") {
+    project = msg.project || null;
+    renderProjectPanel();
+    if (!document.getElementById("project-overlay").hidden) renderProjectOverlay();
   }
 
   if (msg.type === "departments_updated") {
@@ -583,13 +626,50 @@ function openActivity(msg) {
 
   if (msg.kind === "blocks") {
     actState = { order: [] };
-    const p = document.createElement("p"); p.textContent = msg.data.prompt + " (кликай блоки по порядку)"; body.appendChild(p);
-    const list = document.createElement("div"); body.appendChild(list);
+    const p = document.createElement("p");
+    p.textContent = msg.data.prompt + " (кликай по порядку; клик по выбранному — убрать)";
+    body.appendChild(p);
+
+    const resetBtn = document.createElement("button");
+    resetBtn.textContent = "Сбросить порядок";
+    resetBtn.className = "ghost";
+    resetBtn.style.marginBottom = "8px";
+    body.appendChild(resetBtn);
+
+    const list = document.createElement("div");
+    body.appendChild(list);
+
+    const els = [];
     msg.data.items.forEach((item) => {
-      const el = document.createElement("div"); el.className = "act-item"; el.textContent = item;
-      el.onclick = () => { if (el.classList.contains("selected")) return; el.classList.add("selected"); el.textContent = `${actState.order.length + 1}. ${item}`; actState.order.push(item); };
+      const el = document.createElement("div");
+      el.className = "act-item";
+      el.dataset.item = item;
+      el.textContent = item;
+      el.onclick = () => {
+        const idx = actState.order.indexOf(item);
+        if (idx >= 0) actState.order.splice(idx, 1);      // снимаем — можно переставить
+        else actState.order.push(item);                    // добавляем в конец
+        refresh();
+      };
+      els.push(el);
       list.appendChild(el);
     });
+
+    function refresh() {
+      els.forEach((el) => {
+        const item = el.dataset.item;
+        const idx = actState.order.indexOf(item);
+        if (idx >= 0) {
+          el.classList.add("selected");
+          el.textContent = `${idx + 1}. ${item}`;
+        } else {
+          el.classList.remove("selected");
+          el.textContent = item;
+        }
+      });
+    }
+
+    resetBtn.onclick = () => { actState.order = []; refresh(); };
   }
 
   if (msg.kind === "sorting") {
@@ -634,7 +714,12 @@ function collectAnswer() {
 }
 document.getElementById("act-submit").onclick = () => {
   if (!currentActivity) return;
-  socket?.send(JSON.stringify({ type: "submit_activity", instanceId: currentActivity.instanceId, answer: collectAnswer() }));
+  const answer = collectAnswer();
+  if (currentActivity.mode === "step") {
+    socket?.send(JSON.stringify({ type: "submit_activity", stepId: currentActivity.stepId, answer }));
+  } else {
+    socket?.send(JSON.stringify({ type: "submit_activity", instanceId: currentActivity.instanceId, answer }));
+  }
 };
 document.getElementById("act-cancel").onclick = () => hideOverlay(document.getElementById("activity-overlay"));
 
@@ -719,7 +804,12 @@ function findNearestGameInteractable() {
 
 function interactLabel(id) {
   if (id === "pm_desk") return "E — взять задачу у PM";
-  if (id === "work_terminal") return "E — открыть мини-игру";
+  if (id === "work_terminal") {
+    return myStepOfProject()
+      ? "E — сдать шаг конвейера"
+      : "E — открыть мини-игру задачи";
+  }
+  if (id === "project_board") return "E — открыть доску проекта";
   if (id.startsWith("dept_sign_")) return "E — перейти в отдел";
   return "E — взаимодействие";
 }
@@ -727,9 +817,12 @@ function interactLabel(id) {
 function tryInteract() {
   if (!socket || socket.readyState !== 1) return;
   const best = findNearestGameInteractable();
-  if (!best) { log("Подойдите ближе к стенду / столу PM / консоли."); return; }
-  const id = best.userData.interactableId;
+  if (!best) { log("Подойдите ближе к стенду / столу PM / доске / консоли."); return; }
 
+  const id = best.userData.interactableId;
+  log(`E нажато → ближайший объект: ${id}`);   // диагностика: видно, что реально рядом
+
+  if (id === "project_board") { showProjectOverlay(); return; }
   if (id === "work_terminal") { socket.send(JSON.stringify({ type: "start_activity" })); return; }
 
   if (id.startsWith("dept_sign_")) {
@@ -776,11 +869,8 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   // оверлеи: Esc закрывает, Enter в npc-поле отправляет
-  const npcOv = document.getElementById("npc-overlay");
-  if (!npcOv.hidden) {
-    if (event.code === "Escape") hideOverlay(npcOv);
-    return;
-  }
+const projOv = document.getElementById("project-overlay");
+if (!projOv.hidden) { if (event.code === "Escape") closeProjectOverlay(); return; }
   const actOv = document.getElementById("activity-overlay");
   if (!actOv.hidden) { if (event.code === "Escape") hideOverlay(actOv); return; }
   const deptOv = document.getElementById("dept-overlay");
@@ -798,6 +888,7 @@ window.addEventListener("keydown", (event) => {
     }
   }
   if (event.code === "KeyN") tryTalkNPC();
+  if (event.code === "KeyF") { showProjectOverlay(); }
 });
 window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -890,6 +981,89 @@ setInterval(() => {
 }, 100);
 
 let lastTime = performance.now();
+// ================= СОМЕСТНЫЙ ПРОЕКТ (КЛИЕНТ) =================
+function myStepOfProject() {
+  if (!project) return null;
+  return project.steps.find((s) => s.status === "in_progress" && s.assigned_user_id === selfId) || null;
+}
+
+function renderProjectPanel() {
+  const el = document.getElementById("project-panel");
+  if (!el) return;
+  if (!project) { el.textContent = "Совместный проект: нет открытых."; return; }
+  const done = project.steps.filter((s) => s.status === "done").length;
+  const mine = myStepOfProject();
+  el.innerHTML =
+    `<b>Проект: ${project.title}</b> — ${done}/${project.steps.length} шагов (бонус ${project.reward_points})` +
+    (mine
+      ? `<br>🔧 Твой шаг: ${project.steps.find((s) => s.id === mine.id)?.department_name} — сдай на <b>голубой консоли</b> (E) или освободи на доске (F)`
+      : `<br>Свободных шагов твоего отдела нет — жди предыдущий или открой доску (F)`);
+}
+
+function showProjectOverlay() {
+  if (!project) { log("Данные проекта ещё не загружены. Перезайди."); return; }
+  renderProjectOverlay();
+  showOverlay(document.getElementById("project-overlay"));
+}
+function closeProjectOverlay() {
+  hideOverlay(document.getElementById("project-overlay"));
+}
+document.getElementById("proj-close").onclick = closeProjectOverlay;
+
+function renderProjectOverlay() {
+  if (!project) return;
+  document.getElementById("proj-title").textContent = project.title;
+  document.getElementById("proj-desc").textContent = project.description || "";
+  const pct = Math.round((project.overallProgress || 0) * 100);
+  document.getElementById("proj-progress-bar").style.width = pct + "%";
+  const done = project.steps.filter((s) => s.status === "done").length;
+  document.getElementById("proj-progress-text").textContent =
+    `Прогресс: ${done}/${project.steps.length} (${pct}%) · статус: ${project.status === "completed" ? "завершён 🎉" : "в работе"}`;
+
+  const wrap = document.getElementById("proj-steps");
+  wrap.innerHTML = "";
+  const mine = myStepOfProject();
+
+  for (const s of project.steps) {
+    const row = document.createElement("div");
+    row.className = "act-item";
+    row.style.cursor = "default";
+    let badge = "";
+    if (s.status === "done") badge = " ✅ сдано" + (s.by_username ? ` (${s.by_username})` : "");
+    else if (s.status === "in_progress") badge = ` ⏳ в работе: ${s.by_username || "?"}`;
+    else if (s.status === "locked") badge = " 🔒 ждёт предыдущий шаг";
+    row.innerHTML = `<b>${s.order_index + 1}. ${s.department_name}</b>${badge}`;
+
+    // свой взятый шаг — можно освободить, чтобы не висишь тупиком
+    if (s.status === "in_progress" && s.assigned_user_id === selfId) {
+      const rel = document.createElement("button");
+      rel.textContent = "Освободить шаг";
+      rel.className = "ghost";
+      rel.style.marginTop = "6px";
+      rel.onclick = () => socket?.send(JSON.stringify({ type: "release_step", stepId: s.id }));
+      row.appendChild(rel);
+      const tip = document.createElement("div");
+      tip.style.cssText = "font-size:12px;opacity:.8;margin-top:4px";
+      tip.textContent = "Или сдай на голубой консоли (подойди и нажми E).";
+      row.appendChild(tip);
+    }
+
+    if (s.status === "available") {
+      const canTake = playerDepartment && playerDepartment.id === s.department_id && !mine;
+      const btn = document.createElement("button");
+      btn.textContent = canTake ? "Взять шаг" : (playerDepartment && playerDepartment.id === s.department_id ? "У тебя уже есть шаг" : "Не ваш отдел");
+      btn.disabled = !canTake;
+      btn.style.marginTop = "6px";
+      btn.onclick = () => {
+        closeProjectOverlay();
+        socket?.send(JSON.stringify({ type: "claim_step", stepId: s.id }));
+      };
+      row.appendChild(btn);
+    }
+    wrap.appendChild(row);
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();

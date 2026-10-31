@@ -17,7 +17,8 @@
       #overlay,
       #dept-overlay,
       #activity-overlay,
-      #npc-overlay {
+      #npc-overlay,
+      #project-overlay {
         position: fixed;
         inset: 0;
         display: flex;
@@ -170,11 +171,26 @@
     <div id="hud" hidden>
       <div id="dept-panel" class="hud-box"></div>
       <div id="task-panel" class="hud-box"></div>
+      <div id="project-panel" class="hud-box"></div>
       <div id="log"></div>
       <div id="controls-hint">
         ЛКМ — захват мыши · WASD — движение · Space — прыжок<br />
         E — сесть / встать / использовать компьютер / терминал<br />
         N — спросить NPC · Esc — закрыть окно
+        F — доска совместного проекта (конвейер)<br />
+      </div>
+    </div>
+
+    <div id="project-overlay" hidden>
+      <div class="panel wide">
+        <h3 id="proj-title">Проект</h3>
+        <div id="proj-desc" style="font-size:13px;opacity:.85;margin-bottom:10px"></div>
+        <div id="proj-progress" style="height:10px;background:#1e293b;border-radius:6px;overflow:hidden;margin-bottom:6px">
+          <div id="proj-progress-bar" style="height:100%;width:0%;background:#22d3ee;transition:width .3s"></div>
+        </div>
+        <div id="proj-progress-text" style="font-size:12px;opacity:.8;margin-bottom:12px"></div>
+        <div id="proj-steps"></div>
+        <button id="proj-close" class="ghost" style="margin-top:12px">Закрыть (Esc)</button>
       </div>
     </div>
 

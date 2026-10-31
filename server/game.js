@@ -132,6 +132,24 @@ function getDepartmentTasks(db, departmentId) {
   `).all(departmentId);
 }
 
+function releaseStep(db, ws, stepId) {
+  const step = db.prepare(`
+    SELECT * FROM project_steps
+    WHERE id = ? AND assigned_user_id = ? AND status = 'in_progress'
+  `).get(stepId, ws.userId);
+
+  if (!step) {
+    sendJSON(ws, "game_event", { message: "Этот шаг не твой или уже свободен." });
+    return;
+  }
+
+  db.prepare(`UPDATE project_steps SET status = 'available', assigned_user_id = NULL WHERE id = ?`).run(stepId);
+  broadcastProjectStatus(db, step.project_id);
+  sendJSON(ws, "game_event", {
+    message: "Ты освободила шаг — теперь его может взять любой сотрудник твоего отдела (и ты сама заново).",
+  });
+}
+
 // Назначить задачу игроку
 function assignTask(db, userId, taskId) {
   // Проверяем, не назначена ли уже
@@ -301,6 +319,7 @@ function leaveDepartment(db, userId) {
   if (!current) return null;
 
   db.prepare("DELETE FROM department_assignments WHERE user_id = ?").run(userId);
+  releaseUserSteps(db, userId);
 
   // Незавершённые задачи сгорают
   db.prepare(`
@@ -394,6 +413,178 @@ async function handleNpcAsk(db, ws, npcId, message) {
   sendJSON(ws, "npc_reply", { npcId, name: npc.name, text: reply });
 }
 
+// ================= СОМЕСТНЫЙ ПРОЕКТ (КОНВЕЙЕР) =================
+function getProjectSnapshot(db) {
+  const proj = db.prepare(`SELECT * FROM team_projects WHERE status = 'open' ORDER BY id LIMIT 1`).get();
+  if (!proj) return null;
+
+  const steps = db.prepare(`
+    SELECT ps.id, ps.department_id, ps.order_index, ps.status, ps.assigned_user_id,
+           d.name AS department_name, a.kind AS activity_kind
+    FROM project_steps ps
+    JOIN departments d ON d.id = ps.department_id
+    LEFT JOIN activities a ON a.id = ps.activity_id
+    WHERE ps.project_id = ?
+    ORDER BY ps.order_index
+  `).all(proj.id);
+
+  const withBy = steps.map((s) => ({
+    ...s,
+    by_username: s.assigned_user_id
+      ? db.prepare("SELECT username FROM users WHERE id = ?").get(s.assigned_user_id)?.username ?? null
+      : null,
+  }));
+
+  const total = withBy.length;
+  const done = withBy.filter((s) => s.status === "done").length;
+  return { ...proj, steps: withBy, overallProgress: total ? done / total : 0 };
+}
+
+function broadcastProjectStatus(db, projectId) {
+  broadcast("team_project_updated", { project: getProjectSnapshot(db) });
+}
+
+function checkActivityAnswer(kind, data, answer) {
+  if (kind === "quiz") return Number(answer) === Number(data.correct);
+  if (kind === "blocks") {
+    return (
+      Array.isArray(answer) &&
+      answer.length === data.correctOrder.length &&
+      answer.every((v, i) => v === data.correctOrder[i])
+    );
+  }
+  if (kind === "sorting") {
+    if (!Array.isArray(answer)) return false;
+    return data.buckets.every((bucket) => {
+      const got = (answer.find((b) => b.bucket === bucket.name)?.items || []).slice().sort();
+      const want = bucket.items.slice().sort();
+      return got.length === want.length && got.every((v, i) => v === want[i]);
+    });
+  }
+  return false;
+}
+
+function claimStep(db, ws, stepId) {
+  const step = db.prepare(`
+    SELECT ps.*, p.status AS project_status
+    FROM project_steps ps JOIN team_projects p ON p.id = ps.project_id
+    WHERE ps.id = ?
+  `).get(stepId);
+
+  if (!step || step.project_status !== "open") {
+    sendJSON(ws, "game_event", { message: "Шаг недоступен." });
+    return;
+  }
+  if (step.status !== "available") {
+    sendJSON(ws, "game_event", { message: "Этот шаг уже занят или заблокирован предыдущим." });
+    return;
+  }
+  const myDept = getPlayerDepartment(db, ws.userId);
+  if (!myDept || myDept.id !== step.department_id) {
+    sendJSON(ws, "game_event", { message: "Этот шаг — зона ответственности другого отдела. Переоденьтесь или позовите коллегу." });
+    return;
+  }
+  const busy = db.prepare(`
+    SELECT id FROM project_steps WHERE project_id = ? AND assigned_user_id = ? AND status = 'in_progress'
+  `).get(step.project_id, ws.userId);
+  if (busy) {
+    sendJSON(ws, "game_event", { message: "У тебя уже взят шаг проекта. Сначала сдай его на мини-игре." });
+    return;
+  }
+
+  db.prepare(`UPDATE project_steps SET status = 'in_progress', assigned_user_id = ? WHERE id = ?`).run(ws.userId, stepId);
+  db.prepare(`INSERT OR IGNORE INTO project_participants (project_id, user_id) VALUES (?, ?)`).run(step.project_id, ws.userId);
+
+  broadcastProjectStatus(db, step.project_id);
+  startStepActivity(db, ws, stepId);
+}
+
+function startStepActivity(db, ws, stepId) {
+  const step = db.prepare(`
+    SELECT ps.id, ps.order_index, ps.activity_id, a.kind, a.data, d.name AS dept_name
+    FROM project_steps ps
+    JOIN activities a ON a.id = ps.activity_id
+    JOIN departments d ON d.id = ps.department_id
+    WHERE ps.id = ? AND ps.assigned_user_id = ? AND ps.status = 'in_progress'
+  `).get(stepId, ws.userId);
+
+  if (!step) { sendJSON(ws, "game_event", { message: "Шаг не найден." }); return; }
+
+  let data = JSON.parse(step.data);
+  if (step.kind === "quiz" && Array.isArray(data.options)) {
+    const paired = data.options.map((t, i) => ({ t, c: i === Number(data.correct) }));
+    const sh = shuffleArray(paired);
+    data = { ...data, options: sh.map((p) => p.t), correct: sh.findIndex((p) => p.c) };
+  }
+  if (step.kind === "blocks" && Array.isArray(data.items)) {
+    data = { ...data, items: shuffleArray(data.items) };
+  }
+
+  sendJSON(ws, "activity_start", {
+    mode: "step",
+    stepId: step.id,
+    taskTitle: `${step.dept_name} · шаг ${step.order_index + 1} конвейера`,
+    kind: step.kind,
+    data,
+  });
+}
+
+function completeStepInternal(db, stepId) {
+  const step = db.prepare(`SELECT project_id FROM project_steps WHERE id = ?`).get(stepId);
+  db.prepare(`UPDATE project_steps SET status = 'done', done_at = CURRENT_TIMESTAMP WHERE id = ?`).run(stepId);
+  db.prepare(`UPDATE project_steps SET status = 'available' WHERE depends_on_step_id = ? AND status = 'locked'`).run(stepId);
+
+  const pid = step.project_id;
+  const notDone = db.prepare(`SELECT COUNT(*) c FROM project_steps WHERE project_id = ? AND status != 'done'`).get(pid).c;
+
+  if (notDone === 0) {
+    const proj = db.prepare(`SELECT * FROM team_projects WHERE id = ?`).get(pid);
+    db.prepare(`UPDATE team_projects SET status = 'completed' WHERE id = ?`).run(pid);
+    const parts = db.prepare(`SELECT user_id FROM project_participants WHERE project_id = ?`).all(pid);
+    for (const p of parts) {
+      const f = getFlags(db, p.user_id);
+      f.points = (f.points || 0) + (proj.reward_points || 0);
+      saveFlags(db, p.user_id, f);
+    }
+    broadcast("game_event", {
+      message: `🎉 Совместный проект «${proj.title}» завершён! Всем участникам +${proj.reward_points} очков.`,
+    });
+  }
+  broadcastProjectStatus(db, pid);
+}
+
+function submitStepActivity(db, ws, stepId, answer) {
+  const step = db.prepare(`
+    SELECT ps.id, a.kind, a.data, d.name AS dept_name
+    FROM project_steps ps
+    JOIN activities a ON a.id = ps.activity_id
+    JOIN departments d ON d.id = ps.department_id
+    WHERE ps.id = ? AND ps.assigned_user_id = ? AND ps.status = 'in_progress'
+  `).get(stepId, ws.userId);
+
+  if (!step) { sendJSON(ws, "activity_result", { ok: false, message: "Шаг не найден или уже закрыт." }); return; }
+
+  const data = JSON.parse(step.data);
+  if (!checkActivityAnswer(step.kind, data, answer)) {
+    sendJSON(ws, "activity_result", { ok: false, message: "Неверно. Попроси подсказку у лида своего отдела и попробуй ещё раз." });
+    return;
+  }
+
+  completeStepInternal(db, stepId);
+  sendJSON(ws, "activity_result", {
+    ok: true,
+    message: `Шаг «${step.dept_name}» сдан!`,
+    totalPoints: getFlags(db, ws.userId).points || 0,
+  });
+}
+
+function releaseUserSteps(db, userId) {
+  const rows = db.prepare(`SELECT DISTINCT project_id FROM project_steps WHERE assigned_user_id = ? AND status = 'in_progress'`).all(userId);
+  if (!rows.length) return;
+  db.prepare(`UPDATE project_steps SET status = 'available', assigned_user_id = NULL WHERE assigned_user_id = ? AND status = 'in_progress'`).run(userId);
+  for (const r of rows) broadcastProjectStatus(db, r.project_id);
+}
+
 function setupGame(server, verifyToken, db) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -468,6 +659,7 @@ function setupGame(server, verifyToken, db) {
       playerDepartment: playerDept,
       otherPlayers,
       flags: getFlags(db, userId),
+      project: getProjectSnapshot(db),
     });
 
     broadcast("player_joined", {
@@ -491,7 +683,16 @@ function setupGame(server, verifyToken, db) {
 
       try {
         if (msg.type === "start_activity") startActivity(db, ws);
-        if (msg.type === "submit_activity") submitActivity(db, ws, msg.instanceId, msg.answer);
+        if (msg.type === "release_step") {
+          releaseStep(db, ws, msg.stepId);
+        }
+        if (msg.type === "submit_activity") {
+          if (msg.stepId != null) submitStepActivity(db, ws, msg.stepId, msg.answer);
+          else submitActivity(db, ws, msg.instanceId, msg.answer);
+        }
+        if (msg.type === "claim_step") {
+          claimStep(db, ws, msg.stepId);
+        }
         if (msg.type === "move") {
           positions.set(userId, {
             x: msg.position?.x || 0,
@@ -520,6 +721,7 @@ function setupGame(server, verifyToken, db) {
       savePosition(db, userId, pos);
       clients.delete(userId);
       positions.delete(userId);
+      releaseUserSteps(db, userId);
       broadcast("player_left", { id: userId });
       broadcast("departments_updated", {
         departments: getDepartmentsWithOccupancy(db),
@@ -542,47 +744,49 @@ function shuffleArray(arr) {
 }
 
 function startActivity(db, ws) {
+  // 1) Приоритет — взятый шаг конвейера
+  const step = db.prepare(`
+    SELECT ps.id
+    FROM project_steps ps
+    JOIN team_projects p ON p.id = ps.project_id
+    WHERE ps.assigned_user_id = ? AND ps.status = 'in_progress' AND p.status = 'open'
+    ORDER BY ps.id LIMIT 1
+  `).get(ws.userId);
+
+  if (step) {
+    startStepActivity(db, ws, step.id);   // шлёт activity_start с mode:"step"
+    return;
+  }
+
+  // 2) Иначе — личная задача отдела
   const active = db.prepare(`
     SELECT ti.id AS instance_id, ti.task_id, t.title
-    FROM task_instances ti
-    JOIN tasks t ON t.id = ti.task_id
+    FROM task_instances ti JOIN tasks t ON t.id = ti.task_id
     WHERE ti.user_id = ? AND ti.status = 'in_progress'
   `).get(ws.userId);
 
   if (!active) {
-    sendJSON(ws, "game_event", { message: "Сначала возьми задачу у стола PM." });
+    sendJSON(ws, "game_event", {
+      message: "Нет ни личной задачи, ни взятого шага. Возьми задачу у PM (жёлтый стол) или шаг на доске (оранжевая).",
+    });
     return;
   }
 
   const activity = getActivityForTask(db, active.task_id);
-  if (!activity) {
-    sendJSON(ws, "game_event", { message: "Для этой задачи пока нет мини-игры." });
-    return;
-  }
+  if (!activity) { sendJSON(ws, "game_event", { message: "Для этой задачи пока нет мини-игры." }); return; }
 
   let data = JSON.parse(activity.data);
-
-  // Quiz: перемешиваем варианты ВМЕСТЕ с флагом правильности,
-  // иначе индекс correct рассинхронится с показанным списком.
   if (activity.kind === "quiz" && Array.isArray(data.options)) {
-    const paired = data.options.map((text, i) => ({
-      text,
-      correct: i === Number(data.correct),
-    }));
-    const shuffled = shuffleArray(paired);
-    data = {
-      ...data,
-      options: shuffled.map((p) => p.text),
-      correct: shuffled.findIndex((p) => p.correct),
-    };
+    const paired = data.options.map((t, i) => ({ t, c: i === Number(data.correct) }));
+    const sh = shuffleArray(paired);
+    data = { ...data, options: sh.map((p) => p.t), correct: sh.findIndex((p) => p.c) };
   }
-
-  // Blocks: перемешиваем только отображаемые блоки, correctOrder остаётся эталоном.
   if (activity.kind === "blocks" && Array.isArray(data.items)) {
     data = { ...data, items: shuffleArray(data.items) };
   }
 
   sendJSON(ws, "activity_start", {
+    mode: "task",
     instanceId: active.instance_id,
     taskTitle: active.title,
     kind: activity.kind,
@@ -592,61 +796,29 @@ function startActivity(db, ws) {
 
 function submitActivity(db, ws, instanceId, answer) {
   const instance = db.prepare(`
-    SELECT ti.*, t.title, t.reward_points
-    FROM task_instances ti
+    SELECT ti.*, t.title, t.reward_points FROM task_instances ti
     JOIN tasks t ON t.id = ti.task_id
     WHERE ti.id = ? AND ti.user_id = ? AND ti.status = 'in_progress'
   `).get(instanceId, ws.userId);
-
-  if (!instance) {
-    sendJSON(ws, "activity_result", { ok: false, message: "Задача не найдена или уже закрыта." });
-    return;
-  }
+  if (!instance) { sendJSON(ws, "activity_result", { ok: false, message: "Задача не найдена или уже закрыта." }); return; }
 
   const activity = getActivityForTask(db, instance.task_id);
   if (!activity) return;
-
   const data = JSON.parse(activity.data);
-  let ok = false;
 
-  if (activity.kind === "quiz") {
-    ok = Number(answer) === Number(data.correct);
-  } else if (activity.kind === "blocks") {
-    ok =
-      Array.isArray(answer) &&
-      answer.length === data.correctOrder.length &&
-      answer.every((v, i) => v === data.correctOrder[i]);
-  } else if (activity.kind === "sorting") {
-    if (Array.isArray(answer)) {
-      ok = data.buckets.every((bucket) => {
-        const got = (answer.find((b) => b.bucket === bucket.name)?.items || []).slice().sort();
-        const want = bucket.items.slice().sort();
-        return got.length === want.length && got.every((v, i) => v === want[i]);
-      });
-    }
-  }
-
-  if (!ok) {
-    sendJSON(ws, "activity_result", {
-      ok: false,
-      message: "Не совсем верно. Попроси подсказку у руководителя отдела и попробуй ещё раз.",
-    });
+  if (!checkActivityAnswer(activity.kind, data, answer)) {
+    sendJSON(ws, "activity_result", { ok: false, message: "Не совсем верно. Попроси подсказку у руководителя отдела и попробуй ещё раз." });
     return;
   }
-
   completeTask(db, ws.userId, instance.task_id, true);
   const flags = getFlags(db, ws.userId);
-
   sendJSON(ws, "activity_result", {
     ok: true,
     message: `Задача "${instance.title}" принята! +${instance.reward_points} очков.`,
     pointsEarned: instance.reward_points,
     totalPoints: flags.points || 0,
   });
-
-  broadcast("game_event", {
-    message: `${ws.username} выполнил мини-игру и сдал задачу "${instance.title}"`,
-  }, ws.userId);
+  broadcast("game_event", { message: `${ws.username} выполнил мини-игру и сдал задачу "${instance.title}"` }, ws.userId);
 }
 
 module.exports = { setupGame };
