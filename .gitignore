@@ -1,0 +1,35 @@
+# Node modules
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Билды
+dist/
+
+# Локальные базы данных
+*.db
+*.sqlite
+*.sqlite3
+
+# Приватные ключи и сертификаты (ВАЖНО!)
+certs/
+*.pem
+*.key
+*.crt
+
+# Логи
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Окружение
+.env
+.env.local
