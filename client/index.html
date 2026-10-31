@@ -70,7 +70,7 @@
       }
 
       #log {
-        max-height: 260px;
+        max-height: 240px;
         overflow: auto;
         font-size: 13px;
         background: rgba(2, 6, 23, 0.65);
@@ -82,7 +82,36 @@
       #controls {
         margin-top: 8px;
         font-size: 12px;
-        opacity: 0.8;
+        opacity: 0.85;
+        line-height: 1.5;
+      }
+
+      #seated-hint {
+        position: fixed;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 20px;
+        border-radius: 20px;
+        background: rgba(2, 6, 23, 0.8);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        font-size: 14px;
+        color: #facc15;
+        z-index: 6;
+      }
+
+      #cafeteria-hint {
+        position: fixed;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 20px;
+        border-radius: 20px;
+        background: rgba(2, 6, 23, 0.8);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        font-size: 14px;
+        color: #4ade80;
+        z-index: 6;
       }
     </style>
   </head>
@@ -105,11 +134,17 @@
     <div id="hud" hidden>
       <div id="log"></div>
       <div id="controls">
-        WASD — движение<br />
-        E — взаимодействие с терминалом<br />
-        N — спросить НПС
+        <strong>WASD</strong> — движение<br />
+        <strong>Space</strong> — прыжок<br />
+        <strong>E</strong> — взаимодействие (терминал / сесть на стул)<br />
+        <strong>N</strong> — спросить НПС<br />
+        <strong>F</strong> — спуск в кофетерий / подъём обратно<br />
+        <span style="opacity:0.6">Кликните по экрану, чтобы захватить мышь</span>
       </div>
     </div>
+
+    <div id="seated-hint" hidden>Вы сидите. Нажмите <strong>E</strong>, чтобы встать</div>
+    <div id="cafeteria-hint" hidden>Нажмите <strong>F</strong>, чтобы спуститься в кофетерий</div>
 
     <script type="module" src="/main.js"></script>
   </body>
