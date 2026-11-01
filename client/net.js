@@ -11,8 +11,9 @@ import { openActivity } from "./activities.js";
 import { npcLogLine } from "./npc-chat.js";
 import { renderProjectPanel, renderProjectOverlay } from "./project.js";
 import { connectPeer, disconnectPeer, handleSignal } from "./voice.js";
-import { floorAt } from "./office.js";
-import { ROOMS } from "./office.js";
+
+// === ОБЪЕДИНЕННЫЕ ИМПОРТЫ ===
+import { floorAt, ROOMS } from "./office.js";
 import { initMetrics, onPong, startMetricsLoop, stopMetricsLoop } from "./metrics.js";
 
 export function teleportToRoom(slug, fallbackPos) {
@@ -98,15 +99,18 @@ export function startGame(token) {
   document.getElementById("hud").hidden = false;
   log("Кликните по экрану, чтобы захватить мышь");
   state.socket = new WebSocket(`${WS}?token=${token}`);
+  
   state.socket.onopen = () => {
     log("Соединение с сервером установлено");
-    initMetrics(send);          // метрики шлют через state.send
-    startMetricsLoop();         // ping + metrics_report раз в ~1с
+    initMetrics(send);          // <-- ДОБАВЛЕНО ДРУГОМ: инициализация метрик
+    startMetricsLoop();         // <-- ДОБАВЛЕНО ДРУГОМ: ping + metrics_report
   };
+  
   state.socket.onclose = (e) => {
     log(`Соединение закрыто (код ${e.code})`);
-    stopMetricsLoop();          // не шлём в мёртвый сокет
+    stopMetricsLoop();          // <-- ДОБАВЛЕНО ДРУГОМ: остановка метрик
   };
+  
   state.socket.onerror = () => log("Ошибка соединения: сервер недоступен или сертификат не принят");
   state.socket.onmessage = (ev) => {
     try { handleMessage(JSON.parse(ev.data)); } catch (e) { console.error("Bad message", e); }
@@ -114,7 +118,11 @@ export function startGame(token) {
 }
 
 export function handleMessage(msg) {
-  if (msg.type === "client_pong") { onPong(msg.ts); return; }
+  if (msg.type === "client_pong") { 
+    onPong(msg.ts); 
+    return; 
+  }
+  
   if (msg.type === "welcome") {
     state.selfId = msg.selfId;
     state.currentUsername = msg.username || state.currentUsername;
@@ -201,18 +209,16 @@ export function handleMessage(msg) {
       // Обновляем позицию
       p.mesh.position.set(msg.position.x, 0, msg.position.z);
       
-      // ПРАВИЛЬНЫЙ ПОВОРОТ С УЧЁТОМ РАЗВОРОТА НА 180°
+      // ПРАВИЛЬНЫЙ ПОВОРОТ С УЧЁТОМ РАЗВОРОТА НА 180° (ТВОЯ ФИЧА)
       let targetY = msg.rotationY || 0;
-      targetY += Math.PI; // Разворот, чтобы лицо смотрело вперёд
+      targetY += Math.PI; 
       
       let currentY = p.mesh.rotation.y;
       let diff = targetY - currentY;
       
-      // Кратчайший путь поворота
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
       
-      // Плавный поворот
       p.mesh.rotation.y += diff * 0.2;
 
       if (p.nameSprite) {
@@ -241,9 +247,12 @@ export function handleMessage(msg) {
       if (state.voiceStarted) disconnectPeer(msg.id);
     }
   }
+  
   if (msg.type === "rtc_signal") handleSignal(msg.from, msg.data);
-    if (msg.type === "app_response") {
-        if (typeof window.__appResponse === "function") window.__appResponse(msg);
+  
+  // <-- ДОБАВЛЕНО ДРУГОМ: обработка ответов от приложения (админка/ПК)
+  if (msg.type === "app_response") {
+    if (typeof window.__appResponse === "function") window.__appResponse(msg);
     return;
   }
 }
