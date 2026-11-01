@@ -9,10 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "protocol-city-dev-secret";
 
 function signToken(user) {
   return jwt.sign(
-    {
-      sub: user.id,
-      username: user.username,
-    },
+    { sub: user.id, username: user.username, role: user.role || "member" },
     JWT_SECRET,
     { expiresIn: "12h" }
   );
@@ -55,25 +52,24 @@ router.post("/register", (req, res) => {
   const passwordHash = bcrypt.hashSync(password, 10);
 
   const info = db
-    .prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)")
-    .run(username, passwordHash);
+    .prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)")
+    .run(username, passwordHash, "member");
 
   const userId = Number(info.lastInsertRowid);
 
   db.prepare(
-    `
-    INSERT OR IGNORE INTO player_states (user_id, x, y, z, rot_y, zone, flags)
-    VALUES (?, 0, 0, 12, 0, 'spawn', '{}')
-  `
+    `INSERT OR IGNORE INTO player_states (user_id, x, y, z, rot_y, zone, flags)
+     VALUES (?, 0, 0, 12, 0, 'spawn', '{}')`
   ).run(userId);
 
-  const token = signToken({ id: userId, username });
+  const token = signToken({ id: userId, username, role: "member" });
 
   res.json({
     token,
     user: {
       id: userId,
       username,
+      role: "member",
     },
   });
 });
@@ -96,13 +92,14 @@ router.post("/login", (req, res) => {
     return res.status(401).json({ error: "неверный логин или пароль" });
   }
 
-  const token = signToken({ id: user.id, username: user.username });
+  const token = signToken({ id: user.id, username: user.username, role: user.role });
 
   res.json({
     token,
     user: {
       id: user.id,
       username: user.username,
+      role: user.role,
     },
   });
 });

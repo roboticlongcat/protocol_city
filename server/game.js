@@ -1,8 +1,19 @@
 const { WebSocketServer } = require("ws");
 const { askNPC } = require("./npc");
 
+function safeJson(str, fallback) {
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return fallback;
+  }
+}
+
 const clients = new Map();
 const positions = new Map();
+
+const { createAdmin } = require("./admin");
+const { createApps } = require("./apps");
 
 function sendJSON(ws, type, payload) {
   if (ws.readyState === 1) {
@@ -587,153 +598,175 @@ function releaseUserSteps(db, userId) {
 
 function setupGame(server, verifyToken, db) {
   const wss = new WebSocketServer({ noServer: true });
+  const admin = createAdmin({
+    db, sendJSON, broadcast, clients,
+    getFlags, getPlayerDepartment, getDepartmentsWithOccupancy,
+  });
+  const apps = createApps({ db, sendJSON, clients, getFlags, getPlayerDepartment, getProjectSnapshot, admin });
 
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, "http://localhost");
     const token = url.searchParams.get("token");
-
     try {
       const payload = verifyToken(token);
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req, payload);
       });
-    } catch {
+    } catch (e) {
+      console.error("[upgrade FAIL]", e && e.message ? e.message : e, "token=", String(token).slice(0, 12));
       socket.destroy();
     }
   });
 
   wss.on("connection", (ws, req, payload) => {
-    const userId = payload.sub;
-    const username = payload.username;
+    try {
+      const userId = payload.sub;
+      const username = payload.username;
 
-    ws.userId = userId;
-    ws.username = username;
+      ws.userId = userId;
+      ws.username = username;
+      const roleRow = db.prepare("SELECT role FROM users WHERE id = ?").get(userId);
+      ws.isAdmin = !!(roleRow && roleRow.role === "admin");
+      console.log("[admin-check]", ws.username, "isAdmin =", ws.isAdmin);
 
-    clients.set(userId, ws);
+      clients.set(userId, ws);
 
-    const state = loadPlayerState(db, userId);
-    const position = {
-      x: state?.x || 0,
-      y: state?.y || 0,
-      z: state?.z || 0,
-      rotY: state?.rot_y || 0,
-    };
+      const state = loadPlayerState(db, userId);
+      const position = {
+        x: state?.x || 0,
+        y: state?.y || 0,
+        z: state?.z || 0,
+        rotY: state?.rot_y || 0,
+      };
 
-    positions.set(userId, position);
+      positions.set(userId, position);
 
-    const departments = getDepartmentsWithOccupancy(db);
-    const npcs = db.prepare(`
-      SELECT n.*, d.slug AS department_slug
-      FROM npcs n
-      LEFT JOIN departments d ON d.id = n.department_id
-    `).all();
+      const departments = getDepartmentsWithOccupancy(db);
+      const npcs = db.prepare(`
+        SELECT n.*, d.slug AS department_slug
+        FROM npcs n
+        LEFT JOIN departments d ON d.id = n.department_id
+      `).all();
 
-    const playerDept = getPlayerDepartment(db, userId);
-    const tasks = playerDept ? getDepartmentTasks(db, playerDept.id) : [];
+      const playerDept = getPlayerDepartment(db, userId);
+      const tasks = playerDept ? getDepartmentTasks(db, playerDept.id) : [];
 
-    const activeTask = db.prepare(`
-      SELECT ti.*, t.title, t.description, t.difficulty, t.reward_points
-      FROM task_instances ti
-      JOIN tasks t ON t.id = ti.task_id
-      WHERE ti.user_id = ? AND ti.status = 'in_progress'
-    `).get(userId);
+      const activeTask = db.prepare(`
+        SELECT ti.*, t.title, t.description, t.difficulty, t.reward_points
+        FROM task_instances ti
+        JOIN tasks t ON t.id = ti.task_id
+        WHERE ti.user_id = ? AND ti.status = 'in_progress'
+      `).get(userId);
 
-    const otherPlayers = [];
-    for (const [otherId, client] of clients.entries()) {
-      if (otherId === userId) continue;
-      otherPlayers.push({
-        id: otherId,
-        username: client.username,
-        position: positions.get(otherId) || { x: 0, y: 0, z: 0 },
-      });
-    }
-
-    sendJSON(ws, "welcome", {
-      selfId: userId,
-      username,
-      position,
-      departments,
-      npcs,
-      tasks,
-      activeTask,
-      playerDepartment: playerDept,
-      otherPlayers,
-      flags: getFlags(db, userId),
-      project: getProjectSnapshot(db),
-    });
-
-    broadcast("player_joined", {
-      id: userId,
-      username,
-      position,
-    }, userId);
-
-    const saveInterval = setInterval(() => {
-      const pos = positions.get(userId);
-      if (pos) savePosition(db, userId, pos);
-    }, 5000);
-
-    ws.on("message", async (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
-        return;
+      const otherPlayers = [];
+      for (const [otherId, client] of clients.entries()) {
+        if (otherId === userId) continue;
+        otherPlayers.push({
+          id: otherId,
+          username: client.username,
+          position: positions.get(otherId) || { x: 0, y: 0, z: 0 },
+        });
       }
 
-      try {
-        if (msg.type === "start_activity") startActivity(db, ws);
-        if (msg.type === "release_step") {
-          releaseStep(db, ws, msg.stepId);
+      sendJSON(ws, "welcome", {
+        selfId: userId,
+        username,
+        position,
+        departments,
+        npcs,
+        tasks,
+        activeTask,
+        playerDepartment: playerDept,
+        otherPlayers,
+        flags: getFlags(db, userId),
+        project: getProjectSnapshot(db),
+        role: payload.role || "member",
+        world: safeJson(db.prepare("SELECT data FROM world_config WHERE id=1").get()?.data || "{}", {}),
+      });
+      if (ws.isAdmin) sendJSON(ws, "admin_snapshot", admin.fullSnapshot());
+
+      broadcast("player_joined", {
+        id: userId,
+        username,
+        position,
+      }, userId);
+
+      const saveInterval = setInterval(() => {
+        const pos = positions.get(userId);
+        if (pos) savePosition(db, userId, pos);
+      }, 5000);
+
+      ws.on("message", async (raw) => {
+        let msg;
+        try {
+          msg = JSON.parse(raw);
+        } catch {
+          return;
         }
-        if (msg.type === "submit_activity") {
-          if (msg.stepId != null) submitStepActivity(db, ws, msg.stepId, msg.answer);
-          else submitActivity(db, ws, msg.instanceId, msg.answer);
-        }
-        if (msg.type === "claim_step") {
-          claimStep(db, ws, msg.stepId);
-        }
-        if (msg.type === "move") {
-          positions.set(userId, {
-            x: msg.position?.x || 0,
-            y: msg.position?.y || 0,
-            z: msg.position?.z || 0,
-            rotY: msg.rotationY || 0,
-          });
-          broadcast("player_moved", {
-            id: userId,
-            position: msg.position,
-            rotationY: msg.rotationY || 0,
-          }, userId);
-        }
-        if (msg.type === "rtc_signal") {
-          const target = clients.get(msg.to);
-          if (target) {
-            sendJSON(target, "rtc_signal", { from: ws.userId, data: msg.data });
+
+        try {
+          if (msg.type === "start_activity") startActivity(db, ws);
+          if (msg.type === "release_step") {
+            releaseStep(db, ws, msg.stepId);
           }
+          if (msg.type === "submit_activity") {
+            if (msg.stepId != null) submitStepActivity(db, ws, msg.stepId, msg.answer);
+            else submitActivity(db, ws, msg.instanceId, msg.answer);
+          }
+          if (msg.type === "client_ping") { sendJSON(ws, "client_pong", { ts: msg.ts }); return; }
+          if (msg.type === "metrics_report") { admin.recordMetrics(userId, msg); return; }
+          if (String(msg.type).startsWith("admin_")) { admin.handleAdminMessage(ws, msg); return; }
+          if (msg.type === "claim_step") {
+            claimStep(db, ws, msg.stepId);
+          }
+          if (msg.type === "move") {
+            positions.set(userId, {
+              x: msg.position?.x || 0,
+              y: msg.position?.y || 0,
+              z: msg.position?.z || 0,
+              rotY: msg.rotationY || 0,
+            });
+            broadcast("player_moved", {
+              id: userId,
+              position: msg.position,
+              rotationY: msg.rotationY || 0,
+            }, userId);
+          }
+          if (msg.type === "rtc_signal") {
+            const target = clients.get(msg.to);
+            if (target) {
+              sendJSON(target, "rtc_signal", { from: ws.userId, data: msg.data });
+            }
+          }
+          if (msg.type === "select_department") handleSelectDepartment(db, ws, msg.departmentId);
+          if (msg.type === "interact") handleInteract(db, ws, msg.objectId);
+          if (msg.type === "npc_ask") await handleNpcAsk(db, ws, msg.npcId, msg.message);
+          if (msg.type === "app_query") { await apps.handleAppQuery(ws, msg); }
+        } catch (err) {
+          console.error("[ws dispatch ERROR]", err);
+          sendJSON(ws, "game_event", { message: "Внутренняя ошибка сервера (см. консоль)." });
         }
-        if (msg.type === "select_department") handleSelectDepartment(db, ws, msg.departmentId);
-        if (msg.type === "interact") handleInteract(db, ws, msg.objectId);
-        if (msg.type === "npc_ask") await handleNpcAsk(db, ws, msg.npcId, msg.message);
-      } catch (err) {
-        console.error("[ws dispatch ERROR]", err);
-        sendJSON(ws, "game_event", { message: "Внутренняя ошибка сервера (см. консоль)." });
-      }
-    });
-
-    ws.on("close", () => {
-      clearInterval(saveInterval);
-      const pos = positions.get(userId) || position;
-      savePosition(db, userId, pos);
-      clients.delete(userId);
-      positions.delete(userId);
-      releaseUserSteps(db, userId);
-      broadcast("player_left", { id: userId });
-      broadcast("departments_updated", {
-        departments: getDepartmentsWithOccupancy(db),
       });
-    });
+
+      ws.on("close", () => {
+        clearInterval(saveInterval);
+        const pos = positions.get(userId) || position;
+        savePosition(db, userId, pos);
+        clients.delete(userId);
+        positions.delete(userId);
+        releaseUserSteps(db, userId);
+        admin.cleanupUser(userId);
+        broadcast("player_left", { id: userId });
+        broadcast("departments_updated", {
+          departments: getDepartmentsWithOccupancy(db),
+        });
+      });
+    } catch (e) {
+    console.error("[connection ERROR]", e);
+    try { ws.close(1011, "server error"); } catch {}
+  }
   });
+  setInterval(() => admin.broadcastMetrics(), 5000);
 }
 
 function getActivityForTask(db, taskId) {

@@ -16,7 +16,9 @@ export function updateMovement(delta) {
     if (playerBody.position.distanceTo(wp) > 4.0) { closeComputer(); return; }
   }
 
-  if (controls.isLocked) {
+    if (state.showHints === false) {
+    hint.style.display = "none";
+  } else if (controls.isLocked) {
     if (state.player.seated) {
       const comp = findComputerUnderCrosshair();
       hint.textContent = comp ? "E — использовать компьютер" : "E — встать";
@@ -55,7 +57,7 @@ export function updateMovement(delta) {
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir); dir.y = 0; dir.normalize();
   const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
   const move = new THREE.Vector3().addScaledVector(dir, forward).addScaledVector(right, strafe);
-  if (move.lengthSq() > 0) move.normalize().multiplyScalar(MOVE_SPEED * delta);
+  if (move.lengthSq() > 0) move.normalize().multiplyScalar(MOVE_SPEED * (state.speedMul || 1) * delta);
 
   const nx = state.player.x + move.x, nz = state.player.z + move.z;
   if (!collides(nx, state.player.z, state.player.y, PLAYER_RADIUS, PLAYER_HEIGHT)) state.player.x = nx;
