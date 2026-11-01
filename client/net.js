@@ -11,7 +11,9 @@ import { openActivity } from "./activities.js";
 import { npcLogLine } from "./npc-chat.js";
 import { renderProjectPanel, renderProjectOverlay } from "./project.js";
 import { connectPeer, disconnectPeer, handleSignal } from "./voice.js";
-import { floorAt, ROOMS } from "./office.js";
+import { floorAt } from "./office.js";
+import { ROOMS } from "./office.js";
+import { initMetrics, onPong, startMetricsLoop, stopMetricsLoop } from "./metrics.js";
 
 export function teleportToRoom(slug, fallbackPos) {
   const room = ROOMS[slug];
@@ -96,8 +98,15 @@ export function startGame(token) {
   document.getElementById("hud").hidden = false;
   log("Кликните по экрану, чтобы захватить мышь");
   state.socket = new WebSocket(`${WS}?token=${token}`);
-  state.socket.onopen = () => log("Соединение с сервером установлено");
-  state.socket.onclose = (e) => log(`Соединение закрыто (код ${e.code})`);
+  state.socket.onopen = () => {
+    log("Соединение с сервером установлено");
+    initMetrics(send);          // метрики шлют через state.send
+    startMetricsLoop();         // ping + metrics_report раз в ~1с
+  };
+  state.socket.onclose = (e) => {
+    log(`Соединение закрыто (код ${e.code})`);
+    stopMetricsLoop();          // не шлём в мёртвый сокет
+  };
   state.socket.onerror = () => log("Ошибка соединения: сервер недоступен или сертификат не принят");
   state.socket.onmessage = (ev) => {
     try { handleMessage(JSON.parse(ev.data)); } catch (e) { console.error("Bad message", e); }
@@ -105,6 +114,7 @@ export function startGame(token) {
 }
 
 export function handleMessage(msg) {
+  if (msg.type === "client_pong") { onPong(msg.ts); return; }
   if (msg.type === "welcome") {
     state.selfId = msg.selfId;
     state.currentUsername = msg.username || state.currentUsername;
@@ -232,4 +242,8 @@ export function handleMessage(msg) {
     }
   }
   if (msg.type === "rtc_signal") handleSignal(msg.from, msg.data);
+    if (msg.type === "app_response") {
+        if (typeof window.__appResponse === "function") window.__appResponse(msg);
+    return;
+  }
 }

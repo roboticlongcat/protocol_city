@@ -30,7 +30,9 @@ export function updateMovement(delta) {
     if (playerBody.position.distanceTo(wp) > 4.0) { closeComputer(); return; }
   }
 
-  if (controls.isLocked) {
+  if (state.showHints === false) {
+    hint.style.display = "none";
+  } else if (controls.isLocked) {
     if (state.player.seated) {
       const comp = findComputerUnderCrosshair();
       hint.textContent = comp ? "E — использовать компьютер" : "E — встать";
@@ -111,10 +113,12 @@ export function updateMovement(delta) {
   const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
   const move = new THREE.Vector3().addScaledVector(dir, forward).addScaledVector(right, strafe);
   
+  // === ОБЪЕДИНЕННОЕ УСКОРЕНИЕ: работает и кофе, и админский множитель ===
   if (move.lengthSq() > 0) {
     move.normalize();
-    const speedMultiplier = state.player.caffeinated ? 1.6 : 1.0;
-    const currentSpeed = MOVE_SPEED * speedMultiplier;
+    const adminSpeedMul = state.speedMul || 1; // Множитель друга (из админки)
+    const caffeineSpeedMul = state.player.caffeinated ? 1.6 : 1.0; // Твой множитель от кофе
+    const currentSpeed = MOVE_SPEED * adminSpeedMul * caffeineSpeedMul;
     move.multiplyScalar(currentSpeed * delta);
   }
 

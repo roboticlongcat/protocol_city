@@ -2,6 +2,94 @@ import { controls } from "./scene.js";
 import { state } from "./state.js";
 import { micOn, deafOn, toggleMic, toggleDeafen } from "./voice.js";
 
+// ============================================================
+// ГАРАНТИРОВАННЫЕ СТИЛИ ОВЕРЛЕЕВ (не зависят от index.html)
+// ============================================================
+const overlayCss = document.createElement("style");
+overlayCss.textContent = `
+  [hidden] { display: none !important; }
+  #overlay, #dept-overlay, #activity-overlay, #npc-overlay, #project-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(3, 7, 18, 0.72);
+    z-index: 20;
+  }
+  .panel {
+    width: 340px;
+    max-width: 92vw;
+    max-height: 86vh;
+    overflow: auto;
+    padding: 24px;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.97);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+  .panel.wide { width: 520px; }
+  .panel input, .panel textarea {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #020617;
+    color: #ffffff;
+    box-sizing: border-box;
+    font-family: inherit;
+  }
+  .panel button {
+    width: 100%;
+    margin-top: 6px;
+    padding: 10px;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #0ea5e9;
+    color: #ffffff;
+    font-weight: 600;
+  }
+  .panel button.ghost { background: #64748b; }
+  #npc-overlay .panel { display: flex; flex-direction: column; }
+  #npc-log {
+    flex: 1 1 auto;
+    min-height: 120px;
+    max-height: 38vh;
+    overflow: auto;
+    margin-bottom: 10px;
+    padding-right: 4px;
+  }
+  #hud {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 5;
+    width: 380px;
+    max-width: 46vw;
+    pointer-events: none;
+  }
+  .hud-box {
+    margin-bottom: 6px;
+    background: rgba(2, 6, 23, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  #log {
+    max-height: 240px;
+    overflow: auto;
+    font-size: 13px;
+    background: rgba(2, 6, 23, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 8px;
+  }
+`;
+document.head.appendChild(overlayCss);
+
 export const crosshair = document.createElement("div");
 crosshair.style.cssText =
   "position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;" +
@@ -56,6 +144,9 @@ export function anyOverlayOpen() {
   return overlayEls().some((e) => e && !e.hidden);
 }
 export function showOverlay(el) {
+  for (const o of overlayEls()) {
+    if (o && o !== el) o.hidden = true;
+  }
   el.hidden = false;
   try { controls.unlock(); } catch {}
   crosshair.style.display = "none";

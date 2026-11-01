@@ -5,6 +5,8 @@ import { state } from "./state.js";
 import { updateMovement, startPositionSync } from "./movement.js";
 import { updateSpatial } from "./voice.js";
 import { NPCModelManager } from "./npc-models.js";
+import { tickFps } from "./metrics.js"; // <-- ДОБАВЛЕНО ОТ ДРУГА (метрики FPS)
+
 import { 
   doors, reactiveNPCs, ambientNPCs, 
   updatePhysics, updateReactiveNPCs, updateAmbientNPCs, 
@@ -13,6 +15,7 @@ import {
 } from "./office.js";
 import { updateDraggedObject, isDragging } from "./interaction.js";
 
+// Side-effect импорты
 import "./net.js";
 import "./ui.js";
 import "./computer.js";
@@ -76,9 +79,12 @@ function animate() {
   lastTime = now;
   totalTime += delta;
 
+  tickFps(now); // <-- ДОБАВЛЕНО ОТ ДРУГА: обновление счетчика FPS
+
   updateMovement(delta);
   updatePhysics(delta);
 
+  // Анимация дверей
   for (const door of doors) {
     if (Math.abs(door.currentRot - door.targetRot) > 0.01) {
       door.currentRot += (door.targetRot - door.currentRot) * Math.min(delta * 6, 1);
@@ -99,8 +105,6 @@ function animate() {
       const isBarista = npcData.isBarista || npcData.role === "barista";
       
       if (isBossStanding || isBarista) {
-        // ВАЖНО: Получаем МИРОВУЮ позицию NPC (а не локальную!)
-        // Это критично для бариста, который находится внутри повёрнутой группы
         const worldPos = new THREE.Vector3();
         npcMesh.getWorldPosition(worldPos);
         worldPos.y = 0;
@@ -108,7 +112,6 @@ function animate() {
         const dist = worldPos.distanceTo(playerPosFlat);
         
         if (dist < 10) {
-          // Направление к игроку в МИРОВЫХ координатах
           const dir = new THREE.Vector3(
             state.player.x - worldPos.x, 
             0, 
@@ -116,7 +119,6 @@ function animate() {
           ).normalize();
           const targetWorldAngle = Math.atan2(dir.x, dir.z);
           
-          // Получаем поворот родителя (группы) в мировых координатах
           let parentWorldAngle = 0;
           if (npcMesh.parent && npcMesh.parent.type !== 'Scene') {
             const parentQuat = new THREE.Quaternion();
@@ -125,10 +127,8 @@ function animate() {
             parentWorldAngle = euler.y;
           }
           
-          // Целевой ЛОКАЛЬНЫЙ поворот = мировой угол - поворот родителя
           const targetLocalAngle = targetWorldAngle - parentWorldAngle;
           
-          // Плавный поворот с учётом кратчайшего пути
           let diff = targetLocalAngle - npcMesh.rotation.y;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
@@ -138,6 +138,7 @@ function animate() {
       }
     }
   }
+
   const playerPos = new THREE.Vector3(state.player.x, 0, state.player.z);
   updateReactiveNPCs(delta, playerPos);
   updateAmbientNPCs(delta, playerPos);
@@ -153,6 +154,13 @@ function animate() {
   renderer.render(scene, camera);
   
   if (state.voiceStarted) updateSpatial(state.otherPlayers);
+  
+  // <-- ДОБАВЛЕНО ОТ ДРУГА: управление видимостью ников
+  const nicksOn = state.showNicks !== false;
+  if (state.localNameSprite) state.localNameSprite.visible = nicksOn;
+  for (const p of state.otherPlayers.values()) {
+    if (p.nameSprite) p.nameSprite.visible = nicksOn;
+  }
 }
 
 animate();

@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS project_participants (
   joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (project_id, user_id)
 );
-`);
 
+CREATE TABLE IF NOT EXISTS world_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  data TEXT NOT NULL DEFAULT '{}'
+);
+`);
+// Безопасные миграции новых полей (SQLite не поддерживает IF NOT EXISTS в ALTER)
+for (const sql of [
+  "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'",
+  "ALTER TABLE npcs ADD COLUMN behavior TEXT DEFAULT '{}'",
+]) {
+  try { db.exec(sql); } catch { /* колонка уже есть */ }
+}
 module.exports = db;

@@ -1,7 +1,7 @@
 import { controls } from "./scene.js";
 import { state, send } from "./state.js";
 import { closeComputer } from "./computer.js";
-import { hideOverlay, refreshVoiceButtons } from "./ui.js";
+import { hideOverlay, refreshVoiceButtons, anyOverlayOpen } from "./ui.js";
 import { toggleMic, toggleDeafen, initVoice, connectPeer } from "./voice.js";
 import { tryInteract, tryTalkNPC, toggleSit, findChairUnderCrosshair, findComputerUnderCrosshair } from "./interaction.js";
 import { openComputer } from "./computer.js";
@@ -45,6 +45,8 @@ window.addEventListener("keyup", (e) => { state.keys[e.code] = false; });
 
 document.addEventListener("click", () => {
   if (controls.isLocked) return;
+  if (state.pcOpen) return;          // клики внутри ПК не должны лочить мышь
+  if (anyOverlayOpen()) return;      // и клики по оверлеям тоже
   const loginHidden = document.getElementById("overlay").hidden;
   if (loginHidden) { try { controls.lock(); } catch {} }
   if (!state.voiceStarted && loginHidden) {
