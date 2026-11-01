@@ -1,3 +1,4 @@
+// net.js
 import * as THREE from "three";
 import { scene, applyPlayerTransforms } from "./scene.js";
 import { state, send } from "./state.js";
@@ -10,8 +11,7 @@ import { openActivity } from "./activities.js";
 import { npcLogLine } from "./npc-chat.js";
 import { renderProjectPanel, renderProjectOverlay } from "./project.js";
 import { connectPeer, disconnectPeer, handleSignal } from "./voice.js";
-import { floorAt } from "./office.js";
-import { ROOMS } from "./office.js";
+import { floorAt, ROOMS } from "./office.js";
 
 export function teleportToRoom(slug, fallbackPos) {
   const room = ROOMS[slug];
@@ -34,16 +34,37 @@ export function teleportToRoom(slug, fallbackPos) {
 
 export function addOtherPlayer(d) {
   if (state.otherPlayers.has(d.id)) return;
-  const mesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.4, 1.0, 4, 12),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b })
-  );
-  mesh.position.set(d.position.x, (d.position.y || 0) + 0.9, d.position.z);
+
+  // Пытаемся создать GLB модель
+  let mesh = null;
+  if (state.npcModelManager && state.npcModelManager.isLoaded) {
+    mesh = state.npcModelManager.createPlayer(d.username, d.position);
+  }
+
+  // Если модель не создана (не загружена или ошибка) — используем капсулу как запасной вариант
+  if (!mesh) {
+    console.warn(`⚠️ GLB модель для ${d.username} пока не готова, используем капсулу`);
+    mesh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.4, 1.0, 4, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+    );
+    mesh.position.set(d.position.x, 0.9, d.position.z);
+  }
+
   scene.add(mesh);
+
   const nameSprite = createNameSprite(d.username || "Игрок", "#fbbf24");
-  nameSprite.position.set(d.position.x, (d.position.y || 0) + 2.3, d.position.z);
+  nameSprite.position.set(d.position.x, 2.3, d.position.z);
   scene.add(nameSprite);
-  state.otherPlayers.set(d.id, { mesh, nameSprite, username: d.username });
+
+  state.otherPlayers.set(d.id, {
+    mesh,
+    nameSprite,
+    username: d.username,
+    isMoving: false
+  });
+  
+  console.log(`✅ Игрок ${d.username} добавлен в сцену`);
 }
 
 async function auth(path) {
@@ -161,14 +182,46 @@ export function handleMessage(msg) {
     log(`Игрок ${msg.username} подключился`);
     if (state.voiceStarted) connectPeer(state.selfId, msg.id);
   }
+
   if (msg.type === "player_moved") {
     const p = state.otherPlayers.get(msg.id);
     if (p) {
-      p.mesh.position.set(msg.position.x, msg.position.y + 0.9, msg.position.z);
-      p.mesh.rotation.y = msg.rotationY || 0;
-      if (p.nameSprite) p.nameSprite.position.set(msg.position.x, msg.position.y + 2.3, msg.position.z);
+      const oldPos = p.mesh.position.clone();
+      
+      // Обновляем позицию
+      p.mesh.position.set(msg.position.x, 0, msg.position.z);
+      
+      // ПРАВИЛЬНЫЙ ПОВОРОТ С УЧЁТОМ РАЗВОРОТА НА 180°
+      let targetY = msg.rotationY || 0;
+      targetY += Math.PI; // Разворот, чтобы лицо смотрело вперёд
+      
+      let currentY = p.mesh.rotation.y;
+      let diff = targetY - currentY;
+      
+      // Кратчайший путь поворота
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      
+      // Плавный поворот
+      p.mesh.rotation.y += diff * 0.2;
+
+      if (p.nameSprite) {
+        p.nameSprite.position.set(msg.position.x, 2.3, msg.position.z);
+      }
+
+      // Анимация ходьбы
+      const distance = oldPos.distanceTo(p.mesh.position);
+      const isMovingNow = distance > 0.05;
+      
+      if (isMovingNow !== p.isMoving) {
+        p.isMoving = isMovingNow;
+        if (state.npcModelManager) {
+          state.npcModelManager.setPlayerAnimation(p.username, isMovingNow);
+        }
+      }
     }
   }
+
   if (msg.type === "player_left") {
     const p = state.otherPlayers.get(msg.id);
     if (p) {

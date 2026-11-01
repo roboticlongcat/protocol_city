@@ -30,10 +30,7 @@ export const playerBody = new THREE.Object3D();
 playerBody.position.set(state.player.x, 0, state.player.z);
 scene.add(playerBody);
 
-export const localPlayer = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.4, 1.0, 4, 12),
-  new THREE.MeshStandardMaterial({ color: 0x22d3ee })
-);
+export const localPlayer = new THREE.Group();
 localPlayer.position.set(state.player.x, state.player.y + 0.9, state.player.z);
 scene.add(localPlayer);
 

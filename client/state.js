@@ -1,5 +1,7 @@
+// state.js
 // Единый источник мутируемого состояния + отправка сообщений на сервер.
 // Все модули шлют через send(), поэтому никто не импортирует net "обратно".
+
 export const state = {
   socket: null,
   selfId: null,
@@ -16,12 +18,14 @@ export const state = {
   currentActivity: null,
   actState: null,
 
-  pcOpen: false,            // был pcScreen.style.display
+  pcOpen: false,
   currentPcMonitor: null,
   talkingNpc: null,
   localNameSprite: null,
 
   keys: {},
+  
+  // Состояние игрока (уже было, оставляем)
   player: {
     x: 0, y: 0, z: 8, vy: 0,
     onGround: true, seated: false, seatChair: null,
@@ -31,6 +35,9 @@ export const state = {
   otherPlayers: new Map(),  // id -> { mesh, nameSprite, username }
   npcMeshes: [],
   interactables: [],
+  
+  // === ДОБАВЛЕНО: Ссылка на менеджер 3D моделей ===
+  npcModelManager: null,
 };
 
 export function send(type, payload = {}) {

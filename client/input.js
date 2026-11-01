@@ -6,6 +6,7 @@ import { toggleMic, toggleDeafen, initVoice, connectPeer } from "./voice.js";
 import { tryInteract, tryTalkNPC, toggleSit, findChairUnderCrosshair, findComputerUnderCrosshair } from "./interaction.js";
 import { openComputer } from "./computer.js";
 import { showProjectOverlay, closeProjectOverlay } from "./project.js";
+import { isDragging, stopDrag } from "./interaction.js";
 
 window.addEventListener("keydown", (event) => {
   if (state.pcOpen) { if (event.code === "Escape") closeComputer(); return; }
@@ -32,6 +33,11 @@ window.addEventListener("keydown", (event) => {
       if (findChairUnderCrosshair()) toggleSit(); else tryInteract();
     }
   }
+  if (event.code === "KeyF") {
+  if (isDragging()) {
+    stopDrag();
+  }
+}
   if (event.code === "KeyN") tryTalkNPC();
   if (event.code === "KeyF") showProjectOverlay();
 });
