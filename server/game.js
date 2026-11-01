@@ -706,6 +706,12 @@ function setupGame(server, verifyToken, db) {
             rotationY: msg.rotationY || 0,
           }, userId);
         }
+        if (msg.type === "rtc_signal") {
+          const target = clients.get(msg.to);
+          if (target) {
+            sendJSON(target, "rtc_signal", { from: ws.userId, data: msg.data });
+          }
+        }
         if (msg.type === "select_department") handleSelectDepartment(db, ws, msg.departmentId);
         if (msg.type === "interact") handleInteract(db, ws, msg.objectId);
         if (msg.type === "npc_ask") await handleNpcAsk(db, ws, msg.npcId, msg.message);
